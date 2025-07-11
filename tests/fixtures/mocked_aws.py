@@ -15,12 +15,15 @@ def point_away_from_aws() -> None:
     os.environ["AWS_SECURITY_TOKEN"] = "testing"
     os.environ["AWS_REGION"] = "us-east-1"
 
+
 @fixture
 def mocked_aws() -> Generator[None, None, None]:
     with mock_aws():
+        # point away from aws, so that we don't use the real aws credentials
         point_away_from_aws()
+
         # create an s3 bucket
-        s3_client = boto3.client("s3")
+        s3_client = boto3.client("s3", region_name="us-east-1")
         s3_client.create_bucket(Bucket=TEST_BUCKET_NAME)
 
         yield
@@ -31,3 +34,5 @@ def mocked_aws() -> Generator[None, None, None]:
             if "Key" in obj:
                 s3_client.delete_object(Bucket=TEST_BUCKET_NAME, Key=obj["Key"])
         s3_client.delete_bucket(Bucket=TEST_BUCKET_NAME)
+        print(f"s3_client: {s3_client}")
+        print("Finished mocked_aws")
