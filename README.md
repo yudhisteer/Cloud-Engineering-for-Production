@@ -127,6 +127,127 @@ While it is a working unit test, there are 2 issues with it:
 
 
 ### 1.3 Mocking Boto3 with Moto
+Now we want to test not with the real AWS resources, but with a **mocked** one. [Moto](https://docs.getmoto.org/en/latest/docs/getting_started.html) is a library that allows us to do just that. We just need to add the `@mock_aws` decorator to the test function and we are good to go! (Or, we can use the `with mock_aws():` context manager.)
+
+#### How the Mock AWS Works ?
+
+The `@mock_aws` decorator creates a testing environment that `simulates` AWS services **locally**:
+
+- When we apply this decorator, it activates `Python context managers` that intercept all Boto3 client and resource creation. This process, known as `monkey patching`, replaces the original AWS connection methods with Moto's `mock` implementations.
+
+- Once activated, any Boto3 client/resource we create operates within Moto's `simulated AWS environment` rather than connecting to real AWS services. All API calls are captured and processed by Moto's **internal state management system** instead of reaching AWS servers.
+
+- Instead of modifying actual AWS resources, all operations (create, read, update, delete) work against Moto's `in-memory representation` of AWS services. This provides fast, isolated testing without any external dependencies or costs.
+
+#### Limitations to Consider:
+
+- **IAM Authorization**: Moto doesn't robustly simulate IAM permissions and access controls. By default, it assumes `full administrative access` to all mocked services.
+- **Testing IAM Policies**: If we need to verify that specific IAM roles have appropriately restrictive permissions, we'll need additional testing strategies since Moto won't enforce these constraints. Instead [LocalStack](https://www.localstack.cloud/) which provides more functionalities but at a price.
+
+Using Moto enables reliable, fast unit testing while avoiding the **complexity** and **cost** of interacting with real AWS infrastructure.
+
+Using the `@mock_aws` decorator:
+
+```python
+from moto import mock_aws
+
+@mock_aws # this is a decorator that will mock the s3 client
+def upload_s3_object(
+    bucket_name: str,
+    object_key: str,
+    file_content: bytes,
+    content_type: Optional[str] = None,
+    s3_client: Optional["S3Client"] = None,
+) -> None:
+    # create a new s3 client if not provided
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+    # set the content type if not provided
+    content_type = content_type or "application/octet-stream"
+    # upload the object to s3 using the upload_object method
+    s3_client.put_object(
+        Bucket=bucket_name,
+        Key=object_key,
+        Body=file_content,
+        ContentType=content_type
+    )
+```
+
+or using the `with mock_aws():` context manager:
+
+```python
+from moto import mock_aws
+
+
+def upload_s3_object(
+    bucket_name: str,
+    object_key: str,
+    file_content: bytes,
+    content_type: Optional[str] = None,
+    s3_client: Optional["S3Client"] = None,
+) -> None:
+    with mock_aws():
+        # create a new s3 client if not provided
+        if s3_client is None:
+            s3_client = boto3.client('s3')
+        # set the content type if not provided
+        content_type = content_type or "application/octet-stream"
+        # upload the object to s3 using the upload_object method
+        s3_client.put_object(
+            Bucket=bucket_name,
+            Key=object_key,
+            Body=file_content,
+            ContentType=content_type
+        )
+```
+
+Before runing the tests, we need to make sure that we are using `testing environment variables` in order to avoid accidentally using the real AWS credentials.
+
+```bash
+export AWS_ACCESS_KEY_ID='testing'
+export AWS_SECRET_ACCESS_KEY='testing'
+export AWS_SECURITY_TOKEN='testing'
+export AWS_SESSION_TOKEN='testing'
+export AWS_DEFAULT_REGION='us-east-1'
+```
+
+We also need to setup the mock **BEFORE** we create the s3 client. If we do it after, the s3 client will be created with the real AWS credentials.
+
+```python
+# GOOD
+with mock_aws():
+    # s3 client is created within the context manager - mock AWS
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+
+# BAD
+# s3 client is created outside the context manager - real AWS
+if s3_client is None:
+    s3_client = boto3.client('s3')
+
+with mock_aws():
+    ...
+```
+
+
+Each time we use the moto mock AWS context manager (such as with a `with mock_aws():` block), it creates a brand new, isolated mock AWS environment. Any resources we create, like S3 buckets, will only exist within that block. As soon as we exit the `with mock_aws():` block, all state is lost and the environment is reset.
+
+```python
+# first context manager
+with mock_aws():
+    # create a new s3 client if not provided
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+
+
+# second different context manager
+with mock_aws():
+    # create a new s3 client if not provided
+    if s3_client is None:
+        s3_client = boto3.client('s3')
+```
+
+To maintain persistent state across multiple tests, such as keeping a pre-created S3 bucket available, we need to make sure that all related setup and test code execute within the **same** `with mock_aws():` context manager block.
 
 
 ### 1.4 Better testing with PyTest Fixtures
