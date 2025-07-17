@@ -124,9 +124,9 @@ While it is a working unit test, there are 2 issues with it:
 2. For all the other tests, we will need to create a bucket and then delete it.  We do not want to repeat this 
    for every test. The `setup` and `teardown` should be done only once.
 
+In the next section, we will fix both issues.
 
-
-### 1.3 Mocking Boto3 with Moto
+### 1.3 Fix 1: Mocking Boto3 with Moto
 Now we want to test not with the real AWS resources, but with a **mocked** one. [Moto](https://docs.getmoto.org/en/latest/docs/getting_started.html) is a library that allows us to do just that. We just need to add the `@mock_aws` decorator to the test function and we are good to go! (Or, we can use the `with mock_aws():` context manager.)
 
 #### How the Mock AWS Works ?
@@ -250,7 +250,111 @@ with mock_aws():
 To maintain persistent state across multiple tests, such as keeping a pre-created S3 bucket available, we need to make sure that all related setup and test code execute within the **same** `with mock_aws():` context manager block.
 
 
-### 1.4 Better testing with PyTest Fixtures
+### 1.4 Fix 2: Unit Test with PyTest Fixtures
+
+The ideal structure for a test is as follows:
+
+1. **Setup:** Prepare any required state, such as creating an S3 bucket.
+2. **Action:** Perform the operation you want to test, for example, uploading files to the bucket.
+3. **Assertion:** Check that the operation had the expected effect, such as verifying that files were uploaded successfully.
+4. **Cleanup:** Always clean up any state you created, regardless of whether the test passed or failed, to ensure tests remain stateless.
+
+In our unit test function `test__upload_s3_object`, we do not properly handle the cleanup step. If step 3, the assertion, fails, the test will exit early and cleanup code will **NOT** run. This can lead to leftover resources, which is problematic especially if using real AWS resources, as it can cause unnecessary costs and confusion.
+
+To fix this, we can use PyTest fixtures. Pytest fixtures allow you to have a **shared setup** and **teardown** of the testing logic. We register the fixtures in the `conftest.py` file.
+
+```python
+# tests/conftest.py
+pytest_plugins = [
+    "tests.fixtures.mocked_aws",
+]
+```
+
+In the code below, we are implementing `step 1` and `step 4` in the `mocked_aws` function which is decorated with `@pytest.fixture(scope="function")`. This means that the function will be run before each test function.
+
+```python
+# tests/fixtures/mocked_aws.py
+
+def point_away_from_aws() -> None:
+    os.environ["AWS_ACCESS_KEY_ID"] = "testing"
+    os.environ["AWS_SECRET_ACCESS_KEY"] = "testing"
+    os.environ["AWS_SESSION_TOKEN"] = "testing"
+    os.environ["AWS_SECURITY_TOKEN"] = "testing"
+    os.environ["AWS_REGION"] = "us-east-1"
+
+
+@pytest.fixture(scope="function")
+def mocked_aws() -> Generator[None, None, None]:
+    with mock_aws():
+        # point away from aws, so that we don't use the real aws credentials
+        point_away_from_aws()
+
+        # 1. create an s3 bucket
+        s3_client = boto3.client("s3", region_name="us-east-1")
+        s3_client.create_bucket(Bucket=TEST_BUCKET_NAME)
+
+        yield
+
+        # 4. clean by deleting the bucket and all its objects
+        list_response = s3_client.list_objects_v2(Bucket=TEST_BUCKET_NAME)
+        for obj in list_response.get("Contents", []):
+            if "Key" in obj:
+                s3_client.delete_object(Bucket=TEST_BUCKET_NAME, Key=obj["Key"])
+        s3_client.delete_bucket(Bucket=TEST_BUCKET_NAME)
+        print(f"s3_client: {s3_client}")
+        print("Finished mocked_aws")
+
+```
+
+VERY IMPORTANT:
+The `yield` statement in our pytest fixture temporarily pauses the fixture, allowing the test code to run while keeping the `mock_aws()` context manager **active**. This ensures that the Moto mock environment remains in effect throughout the test. After the test completes, the fixture resumes after the `yield` to perform any necessary cleanup, still within the Moto context.
+
+To use the fixture, we need to add the `mocked_aws` parameter to the test function.
+
+```python
+# tests/unit_tests/s3/test__write_objects.py
+
+def test__upload_s3_object(mocked_aws: None) -> None:
+    # upload a file to the bucket, with a particular content type
+    object_key = "test.txt"
+    file_content: bytes = b"Hello, world!"
+    content_type = "text/plain"
+    bucket_name = TEST_BUCKET_NAME
+    upload_s3_object(
+        bucket_name=bucket_name,
+        object_key=object_key,
+        file_content=file_content,
+        content_type=content_type,
+    )
+
+    # check that the file was uploaded with the correct content type
+    s3_client = boto3.client("s3", region_name="us-east-1")
+    response: GetObjectOutputTypeDef = s3_client.get_object(Bucket=TEST_BUCKET_NAME, Key=object_key)
+    assert response["Body"].read() == file_content
+    assert response["ContentType"] == content_type
+    def test__upload_s3_object(mocked_aws: None) -> None:
+    # upload a file to the bucket, with a particular content type
+    object_key = "test.txt"
+    file_content: bytes = b"Hello, world!"
+    content_type = "text/plain"
+    bucket_name = TEST_BUCKET_NAME
+    upload_s3_object(
+        bucket_name=bucket_name,
+        object_key=object_key,
+        file_content=file_content,
+        content_type=content_type,
+    )
+
+    # check that the file was uploaded with the correct content type
+    s3_client = boto3.client("s3", region_name="us-east-1")
+    response: GetObjectOutputTypeDef = s3_client.get_object(Bucket=TEST_BUCKET_NAME, Key=object_key)
+    assert response["Body"].read() == file_content
+    assert response["ContentType"] == content_type
+    
+```
+
+Now that we have a shared setup and teardown, we can write the `R` and `D` in the `CRUD` operations and their respective unit tests using the same fixture by mocking AWS with `moto`.
+
 
 
 
@@ -266,10 +370,6 @@ To maintain persistent state across multiple tests, such as keeping a pre-create
 
 
 
-
-
-
-Without mocking:
 
 
 
