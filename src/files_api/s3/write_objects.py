@@ -1,12 +1,13 @@
 """Functions for writing objects from an S3 bucket--the "C" and "U" in CRUD."""
 
+from posix import read
 from typing import Optional
 import boto3
 
 try:
     from mypy_boto3_s3 import S3Client
 except ImportError:
-    ...
+    print("Mypy S3Client not found")
 
 
 def upload_s3_object(
@@ -25,11 +26,12 @@ def upload_s3_object(
     :param content_type: The MIME type of the file, e.g. "text/plain" for a text file.
     :param s3_client: An optional boto3 S3 client. If not provided, one will be created.
     """
-    s3_client = s3_client or boto3.client("s3")
+    if s3_client is None:
+        s3_client = boto3.client('s3')
     content_type = content_type or "application/octet-stream"
-    s3_client.put_object(
+    print(s3_client.put_object(
         Bucket=bucket_name,
         Key=object_key,
         Body=file_content,
         ContentType=content_type
-    )
+    ))   
