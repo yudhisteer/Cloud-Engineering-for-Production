@@ -5,6 +5,8 @@
 0. AWS CLI Basics
 1. Read, Write, Delete with Boto3
 2. HTTP and REST
+3. Endpoints
+4. Twelve-Factor App
 
 
 -----------------------------------
@@ -355,13 +357,16 @@ def test__upload_s3_object(mocked_aws: None) -> None:
 
 Now that we have a shared setup and teardown, we can write the `R` and `D` in the `CRUD` operations and their respective unit tests using the same fixture by mocking AWS with `moto`.
 
+-------------------------------------------
 
+## 2. HTTP and REST
 
 
 
 -------------------------------------------
 
 
+## 3. Endpoints
 
 
 
@@ -370,7 +375,16 @@ Now that we have a shared setup and teardown, we can write the `R` and `D` in th
 
 
 
+-------------------------------------------
 
+## 4. Twelve-Factor App
+
+
+
+
+
+
+-------------------------------------------
 
 
 ## Appendix
@@ -387,3 +401,7 @@ Common MIME types include:
 - `application/pdf` for PDF documents
 
 In our case, when we download a file from S3 with a specified `ContentType`, the browser will know how to render it.
+
+
+## References
+1. https://12factor.net/
