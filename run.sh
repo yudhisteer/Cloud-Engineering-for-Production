@@ -20,6 +20,24 @@ function install {
     python -m pip install --editable "$THIS_DIR/[dev]"
 }
 
+# run the API server
+function run {
+    uvicorn src.files_api.main:APP --reload
+}
+
+function run-mock {
+    python -m moto.server -p 5000 &
+
+    export AWS_ENDPOINT_URL="http://localhost:5000"
+    export AWS_ACCESS_KEY_ID="mock"
+    export AWS_SECRET_ACCESS_KEY="mock"
+
+    # crete a bucket using mocked aws server
+    aws s3 mb s3://some-bucket
+
+    uvicorn src.files_api.main:APP --reload
+}
+
 # run linting, formatting, and other static code quality tools
 function lint {
     pre-commit run --all-files
@@ -52,7 +70,9 @@ function run-tests {
     rm -rf "$THIS_DIR/test-reports" || mkdir "$THIS_DIR/test-reports"
 
     # execute the tests, calculate coverage, and generate coverage reports in the test-reports dir
-    python -m pytest ${@:-"$THIS_DIR/tests/"} \
+    # python -m pytest ${@:-"$THIS_DIR/tests/"} \
+    # Clear PYTHONPATH to prevent ROS packages from being discovered as pytest plugins
+    PYTHONPATH="" python -m pytest ${@:-"$THIS_DIR/tests/"} \
         --cov "${COVERAGE_DIR:-$THIS_DIR/src}" \
         --cov-report html \
         --cov-report term \
