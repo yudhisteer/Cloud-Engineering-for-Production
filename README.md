@@ -367,9 +367,405 @@ Now that we have a shared setup and teardown, we can write the `R` and `D` in th
 
 
 ## 3. Endpoints
+Let's look at some specs for the API to **Upload** or **Overwrite** files in S3. We will use FastAPI to create the endpoints.
+
+### 3.1 Upload or Overwrite Files
+
+We use the `PUT` method for both creating and updating files because the file path uniquely identifies each resource. Since the client always knows the full path (URN) of the file, `PUT` is appropriate for both operations. This approach ensures that each file can be created or replaced at a known location without ambiguity.
+
+- Endpoint: `/files/{file_path:path}`
+    - Method: `PUT`
+
+- Request
+    - Path Parameter: `file_path` (string, required) - The path where the file will be stored in S3.
+    - Query Parameter: None
+    - Request Body: `file` (file, required) - The file to be uploaded.
+    - Notable Request Headers: 
+        - `Content-Type` (string, required) - The MIME type of the file being uploaded (e.g., `text/plain`, `image/jpeg`).
+
+    - Example Request:
+        ```http
+        PUT /files/my_folder/my_file.txt
+        Content-Type: text/plain
+
+        (file content here)
+        ```
+
+- Response
+    - Status Codes:
+        - `200 OK` - If the file was successfully updated.
+        - `201 Created` - If a new file was successfully created.
+    - Notable Response Headers: None
+    - Response Payload (for 201 Created):
+        ```json
+        {
+            "file_path": "my_folder/my_file.txt",
+            "message": "New file uploaded at path: /my_folder/my_file.txt"
+        }
+        ```
+    - Example Response (for 201 Created):
+        ```json
+        {
+            "file_path": "my_folder/my_file.txt",
+            "message": "New file uploaded at path: /my_folder/my_file.txt"
+        }
+        ```
+        ```json
+        {
+            "file_path": "my_folder/my_file.txt",
+            "message": "Existing file updated at path: /my_folder/my_file.txt"
+        }
+        ```
+
+Note: We use Uses FastAPI's `UploadFile` to handle binary file uploads. `file.content_type` preserves the original content type of the uploaded file. While we do handle the `Content-Type`  via `file.content_type`, we don't explicitly validate or document that this header is required or notable. For the returned response, we define a `PutFileResponse` pydantic model to encapsulate the file path and a message indicating whether the file was newly created or updated. 
+
+
+```python
+# create/update (CrUd)
+class PutFileResponse(BaseModel):
+    file_path: str
+    message: str
+
+
+@APP.put("/files/{file_path:path}")
+async def upload_file(file_path: str, file: UploadFile, response: Response) -> PutFileResponse:
+    """Upload a file."""
+    # Check if the file already exists in S3
+    object_already_exists = object_exists_in_s3(
+        bucket_name=S3_BUCKET_NAME,
+        object_key=file_path,
+    )
+    if object_already_exists:
+        response_message = f"Existing file updated at path: /{file_path}"
+        # response.status_code = status.HTTP_204_NO_CONTENT #  does not return a response body
+        response.status_code = status.HTTP_200_OK
+    else:
+        response_message = f"New file uploaded at path: /{file_path}"
+        response.status_code = status.HTTP_201_CREATED
+
+    # Read the file contents and upload to S3
+    file_contents = await file.read()
+    upload_s3_object(
+        bucket_name=S3_BUCKET_NAME,
+        object_key=file_path,
+        file_content=file_contents,
+        content_type=file.content_type,
+    )
+
+    return PutFileResponse(
+        file_path=file_path,
+        message=response_message,
+    )
+
+```
+
+### 3.2 List Files
+To list files in a specific folder, we will use the `GET` method. This method retrieves a list of files in the specified folder in S3.
+
+- Endpoint: `/files`
+    - Method: `GET`
+
+- Request
+    - Path Parameter: None
+    - Query Parameters:
+        - `directory` (string, optional) - The folder path to list files from.
+        - `page_size` (integer, optional) - The number of files to return per page (default: 10, max: 100).
+        - `page_token` (string, optional) - A token for pagination to fetch the next set of files.
+      - Request Body: None
+    - Notable Request Headers: None
+    - Example Request:
+        ```http
+        GET /files?directory=my_folder&page_size=10&page_token=abc123
+        ```
+
+- Response
+    - Status Codes:
+        - `200 OK` - If the request was successful.
+    - Notable Response Headers: None
+    - Response Payload:
+      - `files` (array of objects) - A list of file metadata objects, each containing:
+        - `file_path` (string) - The path of the file in S3.
+        - `last_modified` (string, ISO 8601 format) - The last modified timestamp of the file.
+        - `size_bytes` (integer) - The size of the file in bytes.
+      - `next_page_token` (string, optional) - A token to fetch the next page of results, if available.
+    - Example Response:
+        ```json
+        {
+            "files": [
+                {
+                    "file_path": "my_folder/file1.txt",
+                    "last_modified": "2023-10-01T12:00:00Z",
+                    "size_bytes": 1234
+                },
+                {
+                    "file_path": "my_folder/file2.jpg",
+                    "last_modified": "2023-10-02T15:30:00Z",
+                    "size_bytes": 5678
+                }
+            ],
+            "next_page_token": "xyz789"
+        }
+        ```
+
+Below is the implementation of the `GET /files` endpoint.  `GetFilesResponse` includes a list of `FileMetadata` objects and an optional `next_page_token` for pagination. `GetFilesQueryParams` defines the query parameters for pagination, including `page_size`, `directory`, and `page_token`. The endpoint fetches files from S3 using the `fetch_s3_objects_metadata` or `fetch_s3_objects_using_page_token` functions, depending on whether a page token is provided. It then converts the fetched file metadata into `FileMetadata` objects and returns them in the response using the `GetFilesResponse` model.
+
+We use `Depends()` to automatically parse and validate the query parameters using FastAPI's dependency injection system against the `GetFilesQueryParams` model.
+
+  - FastAPI automatically converts URL query parameters to the appropriate types defined in the model. Ex:
+    - `page_size` will be converted from **string** to **int** automatically.
+
+  - `Depends()` ensures the defaults values from the pydantic model are used when parameters are not provided in the request.
+
+  - Query parameters and their types are clearly **documented** in the Swagger UI and OpenAPI schema generated by FastAPI.
+    - Example:
+          ```
+          GET /files                     → Uses defaults (page_size=10, directory="")
+          GET /files?page_size=20        → Uses page_size=20 with other defaults
+          GET /files?directory=foo/bar   → Lists files in foo/bar directory
+          ```
+
+  - Without `Depends()`, we would have to **manually** parse and validate query parameters, which is error-prone and less efficient.
+      - Example:
+        ```python
+        @APP.get("/files")
+        async def list_files(
+            page_size: int = 10,
+            directory: str = "",
+            page_token: Optional[str] = None
+        ) -> GetFilesResponse:
+            # Manual validation would be needed here
+            if page_size <= 0:
+                raise HTTPException(status_code=400, detail="Invalid page size")
+        ```
+
+
+```python
+# read (cRud)
+class FileMetadata(BaseModel):
+    file_path: str
+    last_modified: datetime
+    size_bytes: int
+
+# read (cRud)
+class GetFilesResponse(BaseModel):
+    files: List[FileMetadata]
+    next_page_token: Optional[str]
+
+# read (cRud)
+class GetFilesQueryParams(BaseModel):
+    page_size: int = 10
+    directory: Optional[str] = ""
+    page_token: Optional[str] = None
+
+
+@APP.get("/files")
+async def list_files(
+    query_params: GetFilesQueryParams = Depends(),  # noqa: B008
+) -> GetFilesResponse:
+    """List files with pagination."""
+    # Validate page size
+    if query_params.page_token:
+        # If a page token is provided, fetch the next page of files
+        files, next_page_token = fetch_s3_objects_using_page_token(
+            bucket_name=S3_BUCKET_NAME,
+            continuation_token=query_params.page_token,
+            max_keys=query_params.page_size,
+        )
+    else:
+        # If no page token is provided, fetch the first page of files
+        files, next_page_token = fetch_s3_objects_metadata(
+            bucket_name=S3_BUCKET_NAME,
+            prefix=query_params.directory,
+            max_keys=query_params.page_size,
+        )
+
+    # Convert the list of files to FileMetadata objects
+    file_metadata_objs = [
+        FileMetadata(
+            file_path=f"{item['Key']}",
+            last_modified=item["LastModified"],
+            size_bytes=item["Size"],
+        )
+        for item in files
+    ]
+
+    return GetFilesResponse(
+        files=file_metadata_objs, 
+        next_page_token=next_page_token if next_page_token else None
+        )
+```
+
+### 3.3 Get File
+To retrieve a specific file from S3, we will use the `GET` method. This method fetches the file from the specified path in S3 and returns it to the client.
+
+- Endpoint: `/files/{file_path:path}`
+    - Method: `GET`
+
+- Request
+    - Path Parameter: `file_path` (string, required) - The path of the file to retrieve from S3.
+    - Query Parameters: None
+    - Request Body: None
+    - Notable Request Headers: None
+    - Example Request:
+        ```http
+        GET /files/my_folder/my_file.txt
+        ```
+
+- Response
+    - Status Codes:
+        - `200 OK` - If the file was successfully retrieved.
+    - Notable Response Headers:
+        - `Content-Type` (string) - The MIME type of the file being returned (e.g., `text/plain`, `image/jpeg`).
+        - `Content-Length` (integer) - The size of the file in bytes.
+    - Response Payload: The file content as a binary stream.
+    - Example Response:
+        ```http
+        HTTP/1.1 200 OK
+        Content-Type: text/plain
+        (file content here)
+        ```
+
+We use `StreamingResponse` to stream the file content directly from S3 to the client. This allows **large** files to be sent efficiently without loading them fully into **memory**. 
+
+The `StreamingResponse` will automatically set the `Content-Type` header based on the file's `MIME` type, so the browser knows how to handle it. For example, if it's a text file, it will be displayed as text. If it's an image, it will be displayed as an image. If it's a PDF, it will be displayed as a PDF document.
+
+
+```python
+from fastapi.responses import StreamingResponse
+
+
+@APP.get("/files/{file_path:path}")
+async def get_file(
+    file_path: str,
+) -> StreamingResponse:
+    """Retrieve a file."""
+    # Fetch the file from S3
+    # Note: file_path is the full path in S3, including any directories
+    get_object_response = fetch_s3_object(S3_BUCKET_NAME, 
+    object_key=file_path)
+
+    # Return the file as a streaming response
+    # This allows large files to be sent without loading them fully into memory
+    return StreamingResponse(
+        content=get_object_response["Body"],
+        media_type=get_object_response["ContentType"],
+    )
+```
+
+### 3.4 Get File Metadata
+To retrieve metadata for a specific file in S3, we will use the `HEAD` method. This method fetches metadata about the file without transferring the file content itself. This is useful for checking properties like size, type, and last modified date without downloading the entire file.
+
+- Endpoint: `/files/{file_path:path}`
+    - Method: `HEAD`
+
+- Request
+    - Path Parameter: `file_path` (string, required) - The path of the file to retrieve metadata for.
+    - Query Parameters: None
+    - Request Body: None
+    - Notable Request Headers: None
+    - Example Request:
+        ```http
+        HEAD /files/my_folder/my_file.txt   
+        ```
+
+- Response
+    - Status Codes:
+        - `200 OK` - If the file metadata was successfully retrieved.
+        - `404 Not Found` - If the file does not exist in S3.
+    - Notable Response Headers:
+        - `Content-Type` (string) - The MIME type of the file (e.g, `text/plain`, `image/jpeg`).
+        - `Content-Length` (integer) - The size of the file in bytes.
+        - `Last-Modified` (string, ISO 8601 format) - The last modified timestamp of the file.
+    - Response Payload: None
+    - Example Response:
+        ```http
+        HTTP/1.1 200 OK
+        Content-Type: text/plain
+        Content-Length: 1234
+        Last-Modified: Wed, 01 Oct 2023 12:00:00 GMT
+        ```
+
+Note : By convention, `HEAD` requests MUST NOT return a body in the response. The response should only contain headers with metadata about the file.
+We use the `fetch_s3_object` function to retrieve the file metadata from S3.
+
+```python
+@APP.head("/files/{file_path:path}")
+async def get_file_metadata(file_path: str, response: Response) -> Response:
+    """Retrieve file metadata.
+
+    Note: by convention, HEAD requests MUST NOT return a body in the response.
+    """
+    # Fetch the file metadata from S3
+    get_object_response = fetch_s3_object(S3_BUCKET_NAME, object_key=file_path)
+
+    # Set the response headers based on the S3 object metadata
+    response.headers["Content-Type"] = get_object_response["ContentType"]
+    response.headers["Content-Length"] = str(get_object_response["ContentLength"])
+    response.headers["Last-Modified"] = get_object_response["LastModified"].strftime("%a, %d %b %Y %H:%M:%S GMT")
+
+    # Set the status code to 200 OK
+    # HEAD requests do not return a body, so we just set the status code and headers
+    response.status_code = status.HTTP_200_OK
+    
+    return response
+
+```
+
+### 3.5 Delete File
+To delete a specific file from S3, we will use the `DELETE` method. This method removes the file from the specified path in S3.
+
+
+- Endpoint: `/files/{file_path:path}`
+    - Method: `DELETE`
+
+- Request
+    - Path Parameter: `file_path` (string, required) - The path of the file to delete from S3.
+    - Query Parameters: None
+    - Request Body: None
+    - Notable Request Headers: None
+    - Example Request:
+        ```http
+        DELETE /files/my_folder/my_file.txt
+        ``` 
+
+- Response
+    - Status Codes:
+        - `204 No Content` - If the file was successfully deleted.
+        - `404 Not Found` - If the file does not exist in S3.
+    - Notable Response Headers: None
+    - Response Payload: None
+    - Example Response: 
+        ```http
+        HTTP/1.1 204 No Content
+        ```
+
+Note: By convention, `DELETE` requests MUST NOT return a body in the response. The response should only indicate the success of the operation with a status code.
+
+We use the `delete_s3_object` function to delete the file from S3. The response status code is set to `204 No Content`, indicating that the request was successful and there is no content to return in the response body.
 
 
 
+
+```python
+@APP.delete("/files/{file_path:path}")
+async def delete_file(
+    file_path: str,
+    response: Response,
+) -> Response:
+    """Delete a file.
+
+    NOTE: DELETE requests MUST NOT return a body in the response."""
+    # Delete the file from S3
+    delete_s3_object(
+        bucket_name=S3_BUCKET_NAME,
+        object_key=file_path,
+    )
+    # Set the response status code to 204 No Content
+    # This indicates that the request was successful and there is no content to return
+    response.status_code = status.HTTP_204_NO_CONTENT
+    
+    return response
+```
 
 
 
