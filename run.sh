@@ -22,7 +22,7 @@ function install {
 
 # run the API server
 function run {
-    uvicorn src.files_api.main:APP --reload
+    AWS_PROFILE=cloud-course S3_BUCKET_NAME="$S3_BUCKET_NAME" uvicorn src.files_api.main:create_app --reload
 }
 
 function run-mock {
@@ -31,11 +31,12 @@ function run-mock {
     export AWS_ENDPOINT_URL="http://localhost:5000"
     export AWS_ACCESS_KEY_ID="mock"
     export AWS_SECRET_ACCESS_KEY="mock"
+    export S3_BUCKET_NAME="some-bucket"
 
     # crete a bucket using mocked aws server
-    aws s3 mb s3://some-bucket
+    aws s3 mb s3://"$S3_BUCKET_NAME"
 
-    uvicorn src.files_api.main:APP --reload
+    uvicorn src.files_api.main:create_app --reload
 }
 
 # run linting, formatting, and other static code quality tools
