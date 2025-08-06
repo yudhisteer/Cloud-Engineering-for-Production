@@ -11,6 +11,7 @@ from fastapi import (
     status,
     Request,
 )
+from files_api.settings import Settings
 from fastapi.responses import StreamingResponse
 from botocore.exceptions import ClientError
 
@@ -35,7 +36,8 @@ ROUTER = APIRouter()
 @ROUTER.put("/files/{file_path:path}")
 async def upload_file(request: Request, file_path: str, file: UploadFile, response: Response) -> PutFileResponse:
     """Upload a file."""
-    s3_bucket_name = request.app.state.s3_bucket_name
+    settings: Settings = request.app.state.settings
+    s3_bucket_name = settings.s3_bucket_name
     # Check if the file already exists in S3
     object_already_exists = object_exists_in_s3(
         bucket_name=s3_bucket_name,
@@ -71,7 +73,8 @@ async def list_files(
     query_params: GetFilesQueryParams = Depends(),  # noqa: B008
 ) -> GetFilesResponse:
     """List files with pagination."""
-    s3_bucket_name = request.app.state.s3_bucket_name
+    settings: Settings = request.app.state.settings
+    s3_bucket_name = settings.s3_bucket_name
     # Validate page size
     if query_params.page_token:
         # If a page token is provided, fetch the next page of files
@@ -111,7 +114,8 @@ async def get_file(
 ) -> StreamingResponse:
     """Retrieve a file."""
     try:
-        s3_bucket_name = request.app.state.s3_bucket_name
+        settings: Settings = request.app.state.settings
+        s3_bucket_name = settings.s3_bucket_name
         # Fetch the file from S3
         # Note: file_path is the full path in S3, including any directories
         get_object_response = fetch_s3_object(s3_bucket_name, object_key=file_path)
@@ -136,7 +140,8 @@ async def get_file_metadata(request: Request, file_path: str, response: Response
     Note: by convention, HEAD requests MUST NOT return a body in the response.
     """
     try:
-        s3_bucket_name = request.app.state.s3_bucket_name
+        settings: Settings = request.app.state.settings
+        s3_bucket_name = settings.s3_bucket_name
         # Fetch the file metadata from S3
         get_object_response = fetch_s3_object(s3_bucket_name, object_key=file_path)
     except ClientError as e:
@@ -166,7 +171,8 @@ async def delete_file(
 
     NOTE: DELETE requests MUST NOT return a body in the response."""
     # Delete the file from S3
-    s3_bucket_name = request.app.state.s3_bucket_name
+    settings: Settings = request.app.state.settings
+    s3_bucket_name = settings.s3_bucket_name
     delete_s3_object(
         bucket_name=s3_bucket_name,
         object_key=file_path,
