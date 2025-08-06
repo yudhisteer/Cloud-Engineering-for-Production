@@ -745,7 +745,6 @@ We use the `delete_s3_object` function to delete the file from S3. The response 
 
 
 
-
 ```python
 @APP.delete("/files/{file_path:path}")
 async def delete_file(
@@ -798,6 +797,24 @@ Common MIME types include:
 
 In our case, when we download a file from S3 with a specified `ContentType`, the browser will know how to render it.
 
+
+### Query vs Path Parameters
+In RESTful APIs, query parameters and path parameters serve different purposes:
+- **Path Parameters** are part of the URL path and are used to identify a specific resource or resource collection. They are typically used for hierarchical data structures. For example, in the URL `/files/my_folder/my_file.txt`, `my_folder` and `my_file.txt` are path parameters. They are required to uniquely identify the resource being accessed.
+
+```python
+def get_file(file_path: str):
+    # file_path is a path parameter
+    return f"Retrieving file at {file_path}"
+```
+
+- **Query Parameters** are appended to the URL after a `?` and are used to filter, sort, or paginate resources. They are optional and can be used to modify the request without changing the resource being accessed. For example, in the URL `/files?directory=my_folder&page_size=10`, `directory` and `page_size` are query parameters. They do not change the resource being accessed but modify how the resource is returned.
+  
+```python
+def list_files(directory: str = "", page_size: int = 10):
+    # directory and page_size are query parameters
+    return f"Listing files in {directory} with page size {page_size}"
+```
 
 ## References
 1. https://12factor.net/
