@@ -19,4 +19,5 @@ sys.path.insert(0, str(TESTS_DIR_PARENT))
 pytest_plugins = [
     # e.g. "tests/fixtures/mocked_aws.py" should be registered as:
     "tests.fixtures.mocked_aws",
+    "tests.fixtures.api_client",
 ]
