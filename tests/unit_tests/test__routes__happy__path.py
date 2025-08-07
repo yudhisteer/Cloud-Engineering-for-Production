@@ -13,13 +13,6 @@ TEST_FILE_CONTENT = b"Hello, world!"
 TEST_FILE_CONTENT_TYPE = "text/plain"
 
 
-# Fixture for FastAPI test client
-@pytest.fixture
-def client(mocked_aws) -> TestClient:  # pylint: disable=unused-argument
-    settings: Settings = Settings(s3_bucket_name=TEST_BUCKET_NAME)
-    app = create_app(settings=settings)
-    with TestClient(app) as client:
-        yield client
 
 
 def test__upload__file(client: TestClient):
