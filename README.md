@@ -774,12 +774,97 @@ async def delete_file(
 
 ## 4. Twelve-Factor App
 
+### Settings
 
+```python
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    """
+    Settings for the files API.
+
+    Attributes:
+        s3_bucket_name: The name of the S3 bucket to use for storing files.
+        model_config: Configuration for the settings.
+    """
+
+    s3_bucket_name: str = Field(...)
+    model_config = SettingsConfigDict(case_sensitive=False)
+```
+
+
+### Routes
+
+```python
+@ROUTER.get("/files")
+async def list_files(
+    request: Request, # This parameter allows the route handler to receive the current HTTP request object, which provides access to information about the request and the application state (e.g., app.state.settings). FastAPI automatically injects this object when the endpoint is called.
+    query_params: GetFilesQueryParams = Depends(),  # noqa: B008
+) -> GetFilesResponse:
+    ...
+    settings: Settings = request.app.state.settings
+    s3_bucket_name = settings.s3_bucket_name
+    ...
+```
+
+
+### Schemas
+
+
+
+### Main
+
+```python
+def create_app(settings: Settings | None = None) -> FastAPI:
+    """Create and return the FastAPI application instance."""
+    settings = settings or Settings()
+    app = FastAPI()
+    app.state.settings = settings
+    app.include_router(ROUTER)
+    return app
+
+```
+
+```bash
+function run-mock {
+    python -m moto.server -p 5000 &
+
+    export AWS_ENDPOINT_URL="http://localhost:5000"
+    export AWS_ACCESS_KEY_ID="mock"
+    export AWS_SECRET_ACCESS_KEY="mock"
+    export S3_BUCKET_NAME="some-bucket"
+
+    # crete a bucket using mocked aws server
+    aws s3 mb s3://"$S3_BUCKET_NAME"
+
+    uvicorn src.files_api.main:create_app --reload
+}
+```
+
+```bash
+function run {
+    AWS_PROFILE=cloud-course S3_BUCKET_NAME="$S3_BUCKET_NAME" uvicorn src.files_api.main:create_app --reload
+}
+```
 
 
 
 
 -------------------------------------------
+
+## 5. Error Handling
+
+
+Informational responses (100 – 199)
+Successful responses (200 – 299)
+Redirection messages (300 – 399)
+Client error responses (400 – 499)
+Server error responses (500 – 599)
+
+
+
+
 
 
 ## Appendix
@@ -818,3 +903,5 @@ def list_files(directory: str = "", page_size: int = 10):
 
 ## References
 1. https://12factor.net/
+2. https://docs.pydantic.dev/latest/concepts/pydantic_settings/#usage
+3. https://fastapi.tiangolo.com/advanced/settings/
