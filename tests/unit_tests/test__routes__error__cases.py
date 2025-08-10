@@ -1,7 +1,10 @@
+import boto3
 from fastapi import status
 from fastapi.testclient import TestClient
 
 from files_api.schemas import DEFAULT_GET_FILES_MAX_PAGE_SIZE
+from src.utils import delete_s3_bucket
+from tests.consts import TEST_BUCKET_NAME
 
 
 def test__get__nonexistent__file(client: TestClient):
@@ -26,12 +29,33 @@ def test__delete__nonexistent__file(client: TestClient):
     assert response.json() == {"detail": "File not found"}
 
 
-def test__get__files__invalid__page__size(client: TestClient):
-    # Tests: GET /files endpoint (file listing) with invalid query parameter
+def test_get_files_invalid_page_size(client: TestClient):
     response = client.get("/files?page_size=-1")
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    # Test: GET /files endpoint (file listing) with invalid page size
     response = client.get(f"/files?page_size={DEFAULT_GET_FILES_MAX_PAGE_SIZE + 1}")
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+
+def test_get_files_page_token_is_mutually_exclusive_with_page_size_and_directory(client: TestClient):
+    response = client.get("/files?page_token=token&page_size=10")
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "mutually exclusive" in str(response.json())
+
+    response = client.get("/files?page_token=token&directory=dir")
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "mutually exclusive" in str(response.json())
+
+    response = client.get("/files?page_token=token&page_size=10&directory=dir")
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    assert "mutually exclusive" in str(response.json())
+
+
+def test_unforeseemn_500_error(client: TestClient):
+    # delete s3 bucket and all objects in it
+    delete_s3_bucket(TEST_BUCKET_NAME)
+
+    # make a request to the API to a route that interacts with the s3
+    response = client.get("/files")
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert response.json() == {"detail": "Internal server error"}
